@@ -4409,25 +4409,46 @@ async function loadPersonal(matched) {
   if (!el) return;
   el.innerHTML = loader();
   const isDozhim = matched.role === 'dozhim';
+  const stillPersonal = () => document.getElementById('scr-personal')?.classList.contains('on');
   try {
     if (isDozhim) {
-      if (!S.data.d_vizity) S.data.d_vizity = await api(SHEETS.d_vizity, 'A:N');
-      if (!S.data.plan)     S.data.plan     = await api(SHEETS.plan,   'A:B');
+      const [dv, pd] = await Promise.all([
+        S.data.d_vizity ? Promise.resolve(S.data.d_vizity) : api(SHEETS.d_vizity, 'A:N'),
+        S.data.plan     ? Promise.resolve(S.data.plan)     : api(SHEETS.plan,   'A:B'),
+      ]);
+      S.data.d_vizity = dv;
+      S.data.plan = pd;
     } else {
-      if (!S.data.vizity) S.data.vizity = await api(SHEETS.vizity, 'A:N');
-      if (!S.data.plan)   S.data.plan   = await api(SHEETS.plan,   'A:B');
-      if (!S.data.stavki) {
-        try { S.data.stavki = await api(SHEETS.stavki, 'A1:B25'); }
-        catch(e) { S.data.stavki = []; }
-      }
-      if (!S.data.cnvrs) S.data.cnvrs = await api(SHEETS.cnvrs, 'A1:N40');
+      const [vd, pd] = await Promise.all([
+        S.data.vizity ? Promise.resolve(S.data.vizity) : api(SHEETS.vizity, 'A:N'),
+        S.data.plan   ? Promise.resolve(S.data.plan)   : api(SHEETS.plan,   'A:B'),
+      ]);
+      S.data.vizity = vd;
+      S.data.plan = pd;
     }
-    if (!S.data.grafik) S.data.grafik = await api(SHEETS.grafik, 'A1:AI25');
   } catch(e) {
     if (e.message !== 'auth') el.innerHTML = `<div class="err">Ошибка загрузки данных: ${e.message}</div>`;
     return;
   }
+  if (!S.data.stavki) S.data.stavki = [];
+  if (!S.data.d_stavki) S.data.d_stavki = [];
+  if (!S.data.cnvrs) S.data.cnvrs = [];
+  if (!S.data.grafik) S.data.grafik = [];
   renderPersonal(matched);
+
+  const optionalLoads = [];
+  if (isDozhim) {
+    if (!S.data.d_stavki?.length) optionalLoads.push(api(SHEETS.d_stavki, 'A1:B25').then(d => { S.data.d_stavki = d; }));
+  } else {
+    if (!S.data.stavki?.length) optionalLoads.push(api(SHEETS.stavki, 'A1:B25').then(d => { S.data.stavki = d; }));
+    if (!S.data.cnvrs?.length) optionalLoads.push(api(SHEETS.cnvrs, 'A1:N40').then(d => { S.data.cnvrs = d; }));
+  }
+  if (!S.data.grafik?.length) optionalLoads.push(api(SHEETS.grafik, 'A1:AI25').then(d => { S.data.grafik = d; }));
+  if (optionalLoads.length) {
+    Promise.allSettled(optionalLoads).then(() => {
+      if (stillPersonal()) renderPersonal(matched);
+    });
+  }
 }
 
 function renderPersonal(matched) {
