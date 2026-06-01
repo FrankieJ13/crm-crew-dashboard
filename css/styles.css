@@ -1572,6 +1572,40 @@ body.cosmic .ldv2 i:nth-child(11) { --orb-a:#d7ffbd; --orb-b:#61e294; --orb-c:#1
 body.cosmic .ldv2 i:nth-child(6),
 body.cosmic .ldv2 i:nth-child(12),
 body.cosmic .ldv2 i:nth-child(13) { --orb-a:#c9d8ff; --orb-b:#7a8cff; --orb-c:#4e54c8; }
+.loader-diag {
+  width:min(360px, 92vw);
+  min-height:0;
+  color:var(--txt2);
+  font-size:11px;
+  line-height:1.35;
+  text-align:left;
+}
+.loader-diag-title {
+  margin:4px 0 6px;
+  color:var(--txt);
+  font-family:'Unbounded',sans-serif;
+  font-size:10px;
+  font-weight:800;
+  opacity:.72;
+}
+.loader-diag-row {
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  padding:6px 8px;
+  margin-top:5px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:rgba(255,255,255,.06);
+}
+.loader-diag-row b,
+.loader-diag-row span {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.loader-diag-row b { color:var(--txt); max-width:52%; }
+.loader-diag-row span { color:var(--txt2); }
 .err {
   background:rgba(255,71,87,.08); border:1px solid rgba(255,71,87,.25);
   border-radius:var(--r2); padding:14px 16px; color:var(--red);

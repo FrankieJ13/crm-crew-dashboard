@@ -356,7 +356,65 @@ function rankStyles(pos, total) {
 }
 function loader(text='Синхронизация…') {
   const parts = Array(13).fill('<i></i>').join('');
-  return `<div class="loader"><div class="ldv2">${parts}</div><span>${text}</span></div>`;
+  return `<div class="loader"><div class="ldv2">${parts}</div><span>${text}</span><div class="loader-diag" aria-live="polite"></div></div>`;
+}
+
+const apiDiag = {
+  active: new Map(),
+  timer: null,
+};
+
+function renderApiDiagnostics() {
+  const boxes = document.querySelectorAll('.loader-diag');
+  if (!boxes.length) return;
+  const rows = [...apiDiag.active.values()].map(item => {
+    const sec = Math.max(0, Math.round((performance.now() - item.start) / 1000));
+    const attempt = item.retry ? `, попытка ${item.retry + 1}` : '';
+    return `<div class="loader-diag-row"><b>${escapeHtml(item.sheet)}</b><span>${escapeHtml(item.range)} · ${sec}с${attempt}</span></div>`;
+  });
+  boxes.forEach(box => {
+    box.innerHTML = rows.length
+      ? `<div class="loader-diag-title">Жду Google Sheets</div>${rows.join('')}`
+      : '';
+  });
+}
+
+function apiDiagStart(key, sheet, range) {
+  if (!apiDiag.active.has(key)) {
+    apiDiag.active.set(key, { sheet, range, start: performance.now(), retry: 0 });
+  }
+  if (!apiDiag.timer) apiDiag.timer = setInterval(renderApiDiagnostics, 500);
+  renderApiDiagnostics();
+}
+
+function apiDiagRetry(key, retry) {
+  const item = apiDiag.active.get(key);
+  if (!item) return;
+  item.retry = retry;
+  renderApiDiagnostics();
+}
+
+function apiDiagStop(key) {
+  apiDiag.active.delete(key);
+  renderApiDiagnostics();
+  if (!apiDiag.active.size && apiDiag.timer) {
+    clearInterval(apiDiag.timer);
+    apiDiag.timer = null;
+  }
+}
+
+function apiError(sheet, range, err) {
+  if (err?.message === 'auth') return err;
+  const msg = err?.name === 'AbortError' ? 'таймаут запроса' : (err?.message || 'ошибка запроса');
+  const out = new Error(`${sheet}!${range}: ${msg}`);
+  out.code = err?.code || err?.message || err?.name || 'API_ERROR';
+  return out;
+}
+
+function sheetError(sheet, range, msg, code = msg) {
+  const err = new Error(`${sheet}!${range}: ${msg}`);
+  err.code = code;
+  return err;
 }
 
 function medalBtn(idx) {
@@ -1199,16 +1257,19 @@ async function api(sheet, range) {
   // Дедупликация: если уже идёт запрос с тем же ключом — возвращаем тот же Promise
   if (_apiInflight[key]) return _apiInflight[key];
 
+  apiDiagStart(key, sheet, range);
   _apiInflight[key] = _apiFetch(sheet, range, key);
   try {
     const result = await _apiInflight[key];
     return result;
   } finally {
+    apiDiagStop(key);
     delete _apiInflight[key];
   }
 }
 
 async function _apiFetch(sheet, range, key, retryCount = 0) {
+  apiDiagRetry(key, retryCount);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.SHEET_ID}/values/`
             + encodeURIComponent(sheet + '!' + range);
   let r;
@@ -1228,7 +1289,7 @@ async function _apiFetch(sheet, range, key, retryCount = 0) {
       return _apiFetch(sheet, range, key, retryCount + 1);
     }
     toast('Не удалось получить данные Google. Проверьте сеть и обновите экран', 'e');
-    throw err;
+    throw apiError(sheet, range, err);
   } finally {
     clearTimeout(timer);
   }
@@ -1242,7 +1303,7 @@ async function _apiFetch(sheet, range, key, retryCount = 0) {
       return _apiFetch(sheet, range, key, retryCount + 1);
     }
     toast('Превышен лимит Sheets API — подождите минуту', 'e');
-    throw new Error('QUOTA_EXCEEDED');
+    throw sheetError(sheet, range, 'QUOTA_EXCEEDED', 'QUOTA_EXCEEDED');
   }
 
   if (!r.ok) {
@@ -1262,8 +1323,8 @@ async function _apiFetch(sheet, range, key, retryCount = 0) {
       showLoginScreen();
       throw new Error('auth');
     }
-    if (r.status === 404) throw new Error('NOT_FOUND');
-    throw new Error(msg);
+    if (r.status === 404) throw sheetError(sheet, range, 'NOT_FOUND', 'NOT_FOUND');
+    throw sheetError(sheet, range, msg);
   }
 
   const data = (await r.json()).values || [];
@@ -1368,7 +1429,7 @@ async function loadTab(tab) {
           S.data.vizity = vd; S.data.plan = pd;
         } catch(e) {
           if (e.message!=='auth') {
-            if (e.message === 'NOT_FOUND') showArchiveMsg(el);
+            if (e.code === 'NOT_FOUND') showArchiveMsg(el);
             else if (el) el.innerHTML = `<div class="err">Ошибка: ${e.message}</div>`;
           }
           return;
@@ -1408,7 +1469,7 @@ async function loadTab(tab) {
     renderTab(tab);
   } catch(e) {
     if (e.message!=='auth') {
-      if (e.message === 'NOT_FOUND') showArchiveMsg(el);
+      if (e.code === 'NOT_FOUND') showArchiveMsg(el);
       else if (el) el.innerHTML = `<div class="err">Ошибка: ${e.message}</div>`;
     }
   }
