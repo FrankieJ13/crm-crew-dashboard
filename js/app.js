@@ -426,9 +426,10 @@ function medalBtn(idx) {
 let tokenClient;
 let refreshTimer = null;
 let autoRefreshTimer = null;
+let liveRefreshInFlight = false;
 let tokenExpiresAt = 0;
 let tokenRequest = null;
-const AUTO_REFRESH_INTERVAL = 60 * 1000; // 1 минута
+const AUTO_REFRESH_INTERVAL = 3 * 60 * 1000;
 const PRESENCE_STALE_MS = 15 * 60 * 1000;
 
 const firebasePresence = {
@@ -1284,11 +1285,11 @@ async function _apiFetch(sheet, range, key, retryCount = 0) {
     }
     if (retryCount < 2) {
       const wait = (retryCount + 1) * 3000;
-      if (retryCount === 0) toast('Связь с Google нестабильна — повторяю…', 'i');
+      if (retryCount === 0 && !S.silentRefresh) toast('Связь с Google нестабильна — повторяю…', 'i');
       await new Promise(res => setTimeout(res, wait));
       return _apiFetch(sheet, range, key, retryCount + 1);
     }
-    toast('Не удалось получить данные Google. Проверьте сеть и обновите экран', 'e');
+    if (!S.silentRefresh) toast('Не удалось получить данные Google. Проверьте сеть и обновите экран', 'e');
     throw apiError(sheet, range, err);
   } finally {
     clearTimeout(timer);
@@ -1298,11 +1299,11 @@ async function _apiFetch(sheet, range, key, retryCount = 0) {
     // Quota exceeded — ждём и повторяем (до 3 раз)
     if (retryCount < 3) {
       const wait = (retryCount + 1) * 8000; // 8s, 16s, 24s
-      if (retryCount === 0) toast('Лимит запросов — повтор через ' + (wait/1000) + 'с…', 'i');
+      if (retryCount === 0 && !S.silentRefresh) toast('Лимит запросов — повтор через ' + (wait/1000) + 'с…', 'i');
       await new Promise(res => setTimeout(res, wait));
       return _apiFetch(sheet, range, key, retryCount + 1);
     }
-    toast('Превышен лимит Sheets API — подождите минуту', 'e');
+    if (!S.silentRefresh) toast('Превышен лимит Sheets API — подождите минуту', 'e');
     throw sheetError(sheet, range, 'QUOTA_EXCEEDED', 'QUOTA_EXCEEDED');
   }
 
@@ -1719,13 +1720,14 @@ function setLiveHTML(el, html) {
 
 async function refreshVisibleDataLive() {
   if (document.getElementById('scr-vizity')?.classList.contains('on')) return;
+  if (liveRefreshInFlight || Object.keys(_apiInflight).length) return;
   const personalOn = document.getElementById('scr-personal')?.classList.contains('on');
   const ratingOn = document.getElementById('scr-rating')?.classList.contains('on');
   const activeTab = ratingOn ? 'rating' : (document.querySelector('.tab.on')?.dataset.tab || (personalOn ? null : 'otchet'));
   const matched = findUserInSheet();
   const role = matched?.role || '';
 
-  apiCacheInvalidate();
+  liveRefreshInFlight = true;
   S.silentRefresh = true;
   try {
     if (personalOn) {
@@ -1799,6 +1801,7 @@ async function refreshVisibleDataLive() {
     }
   } finally {
     S.silentRefresh = false;
+    liveRefreshInFlight = false;
   }
 }
 
@@ -4499,15 +4502,19 @@ async function loadPersonal(matched) {
 
   const optionalLoads = [];
   if (isDozhim) {
-    if (!S.data.d_stavki?.length) optionalLoads.push(api(SHEETS.d_stavki, 'A1:B25').then(d => { S.data.d_stavki = d; }));
+    if (!S.data.d_stavki?.length) optionalLoads.push(() => api(SHEETS.d_stavki, 'A1:B25').then(d => { S.data.d_stavki = d; }));
   } else {
-    if (!S.data.stavki?.length) optionalLoads.push(api(SHEETS.stavki, 'A1:B25').then(d => { S.data.stavki = d; }));
-    if (!S.data.cnvrs?.length) optionalLoads.push(api(SHEETS.cnvrs, 'A1:N40').then(d => { S.data.cnvrs = d; }));
+    if (!S.data.stavki?.length) optionalLoads.push(() => api(SHEETS.stavki, 'A1:B25').then(d => { S.data.stavki = d; }));
+    if (!S.data.cnvrs?.length) optionalLoads.push(() => api(SHEETS.cnvrs, 'A1:N40').then(d => { S.data.cnvrs = d; }));
   }
-  if (!S.data.grafik?.length) optionalLoads.push(api(SHEETS.grafik, 'A1:AI25').then(d => { S.data.grafik = d; }));
+  if (!S.data.grafik?.length) optionalLoads.push(() => api(SHEETS.grafik, 'A1:AI25').then(d => { S.data.grafik = d; }));
   if (optionalLoads.length) {
-    Promise.allSettled(optionalLoads).then(() => {
+    const wasSilent = S.silentRefresh;
+    S.silentRefresh = true;
+    Promise.allSettled(optionalLoads.map(load => load())).then(() => {
       if (stillPersonal()) renderPersonal(matched);
+    }).finally(() => {
+      S.silentRefresh = wasSilent;
     });
   }
 }
