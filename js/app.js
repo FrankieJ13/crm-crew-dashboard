@@ -825,12 +825,18 @@ async function signInFirebaseAnonymously() {
 
 function scheduleTokenRefresh(expiresIn) {
   if (refreshTimer) clearTimeout(refreshTimer);
-  const delay = Math.max((expiresIn - 300) * 1000, 0);
+  const ttl = Number(expiresIn || 3600);
+  const delay = Math.max((ttl - 300) * 1000, 60_000);
   refreshTimer = setTimeout(() => {
-    if (tokenClient && S.token) {
-      tokenClient.requestAccessToken({ prompt: '' });
-    }
     refreshTimer = null;
+    if (!tokenClient || !S.token) return;
+    requestGoogleToken({ prompt: '', mode: 'refresh', force: true }).catch(err => {
+      console.warn('Token refresh failed', err);
+      S.token = null;
+      tokenExpiresAt = 0;
+      localStorage.removeItem('crm_tok');
+      localStorage.removeItem('crm_exp');
+    });
   }, delay);
 }
 
@@ -856,6 +862,7 @@ function requestGoogleToken({ prompt = '', mode = 'ensure', force = false } = {}
   if (!tokenClient) return Promise.reject(new Error('oauth_not_ready'));
   if (force && tokenRequest) cleanupTokenRequest();
   if (tokenRequest) return tokenRequest.promise;
+  const timeoutMs = mode === 'login' ? 120_000 : mode === 'restore' ? 25_000 : 15_000;
 
   let resolveRequest, rejectRequest;
   const promise = new Promise((resolve, reject) => {
@@ -872,7 +879,7 @@ function requestGoogleToken({ prompt = '', mode = 'ensure', force = false } = {}
       const current = tokenRequest;
       cleanupTokenRequest();
       if (current) current.reject(new Error('oauth_timeout'));
-    }, 15000),
+    }, timeoutMs),
   };
 
   try {
@@ -924,11 +931,14 @@ function initAuth() {
     },
     callback: async (resp) => {
       const pending = tokenRequest;
+      const mode = pending?.mode || 'refresh';
       if (resp.error) {
         cleanupTokenRequest();
         if (window._silentFallback) { clearTimeout(window._silentFallback); window._silentFallback = null; }
-        showLoginScreen();
-        toast('Ошибка: '+resp.error, 'e');
+        if (mode === 'login' || mode === 'restore') {
+          showLoginScreen();
+          toast('Ошибка: '+resp.error, 'e');
+        }
         if (pending) pending.reject(new Error(resp.error));
         return;
       }
@@ -939,25 +949,49 @@ function initAuth() {
       tokenExpiresAt = Date.now() + Math.max((resp.expires_in || 3600) - 60, 60) * 1000;
       localStorage.setItem('crm_tok', resp.access_token);
       localStorage.setItem('crm_exp', tokenExpiresAt);
-      loadUser();
       syncFirebaseAuth(resp.access_token);
-      onLogin();
       scheduleTokenRefresh(resp.expires_in);
-      cleanupTokenRequest();
-      if (pending) pending.resolve(resp);
+      const shouldStartApp = mode === 'login' || mode === 'restore';
+      try {
+        if (shouldStartApp) {
+          const userLoaded = await loadUser();
+          if (!userLoaded || !S.user?.email) {
+            showLoginScreen();
+            toast('Не удалось получить профиль Google. Попробуйте войти еще раз', 'e');
+            cleanupTokenRequest();
+            if (pending) pending.reject(new Error('userinfo_failed'));
+            return;
+          }
+          onLogin();
+        } else {
+          loadUser();
+        }
+        cleanupTokenRequest();
+        if (pending) pending.resolve(resp);
+      } catch (err) {
+        cleanupTokenRequest();
+        if (shouldStartApp) {
+          showLoginScreen();
+          toast('Не удалось завершить вход. Попробуйте еще раз', 'e');
+        }
+        if (pending) pending.reject(err);
+      }
     },
   });
 }
 
 async function loadUser() {
+  let timer = null;
   try {
     const token = S.token || localStorage.getItem('crm_tok');
+    if (!token) return false;
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
+    timer = setTimeout(() => ctrl.abort(), 8000);
     const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo',
       { headers:{ Authorization:'Bearer '+token }, signal: ctrl.signal });
     clearTimeout(timer);
-    if (!r.ok) return;
+    timer = null;
+    if (!r.ok) return false;
     S.user = await r.json();
     localStorage.setItem('crm_user', JSON.stringify(S.user));
     renderUser();
@@ -968,7 +1002,12 @@ async function loadUser() {
       const matched = findUserInSheet();
       if (matched && matched.name) goPersonal();
     }
-  } catch(e) { /* ignore */ }
+    return true;
+  } catch(e) {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function renderUser() {
@@ -1085,7 +1124,20 @@ function tryRestore() {
   if (tok && exp > Date.now()) {
     S.token = tok;
     tokenExpiresAt = exp;
-    if (u) { try { S.user = JSON.parse(u); renderUser(); } catch(e) { localStorage.removeItem('crm_user'); } }
+    let restoredUser = false;
+    if (u) {
+      try {
+        S.user = JSON.parse(u);
+        restoredUser = !!S.user?.email;
+        renderUser();
+      } catch(e) {
+        localStorage.removeItem('crm_user');
+      }
+    }
+    if (!restoredUser) {
+      trySilentRefresh();
+      return false;
+    }
     const remaining = Math.max(Math.floor((exp - Date.now()) / 1000), 0);
     scheduleTokenRefresh(remaining);
     syncFirebaseAuth(tok);
@@ -1111,8 +1163,6 @@ function trySilentRefresh() {
   loader.innerHTML = '<div class="spin"></div><div>Восстановление сессии…</div>';
   document.querySelector('main').prepend(loader);
 
-  tokenClient.requestAccessToken({ prompt: '' });
-
   const fallback = setTimeout(() => {
     const l = document.getElementById('silent-loader');
     if (l) l.remove();
@@ -1123,6 +1173,13 @@ function trySilentRefresh() {
   }, 8000);
 
   window._silentFallback = fallback;
+  requestGoogleToken({ prompt: '', mode: 'restore', force: true }).catch(() => {
+    if (window._silentFallback) { clearTimeout(window._silentFallback); window._silentFallback = null; }
+    const l = document.getElementById('silent-loader');
+    if (l) l.remove();
+    localStorage.removeItem('crm_user');
+    showLoginScreen();
+  });
 }
 
 // ==================== API LAYER ====================
@@ -1155,8 +1212,10 @@ async function _apiFetch(sheet, range, key, retryCount = 0) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${CFG.SHEET_ID}/values/`
             + encodeURIComponent(sheet + '!' + range);
   let r;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
   try {
-    r = await fetch(url, { headers: await authHeaders() });
+    r = await fetch(url, { headers: await authHeaders(), signal: ctrl.signal });
   } catch (err) {
     if (err.isAuthError) {
       showLoginScreen();
@@ -1170,6 +1229,8 @@ async function _apiFetch(sheet, range, key, retryCount = 0) {
     }
     toast('Не удалось получить данные Google. Проверьте сеть и обновите экран', 'e');
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
 
   if (r.status === 429) {
@@ -4350,11 +4411,11 @@ async function loadPersonal(matched) {
   const isDozhim = matched.role === 'dozhim';
   try {
     if (isDozhim) {
-      if (!S.data.d_vizity) S.data.d_vizity = await api(SHEETS.d_vizity, 'A:N').catch(() => []);
-      if (!S.data.plan)     S.data.plan     = await api(SHEETS.plan,   'A:B').catch(() => []);
+      if (!S.data.d_vizity) S.data.d_vizity = await api(SHEETS.d_vizity, 'A:N');
+      if (!S.data.plan)     S.data.plan     = await api(SHEETS.plan,   'A:B');
     } else {
-      if (!S.data.vizity) S.data.vizity = await api(SHEETS.vizity, 'A:N').catch(() => []);
-      if (!S.data.plan)   S.data.plan   = await api(SHEETS.plan,   'A:B').catch(() => []);
+      if (!S.data.vizity) S.data.vizity = await api(SHEETS.vizity, 'A:N');
+      if (!S.data.plan)   S.data.plan   = await api(SHEETS.plan,   'A:B');
       if (!S.data.stavki) {
         try { S.data.stavki = await api(SHEETS.stavki, 'A1:B25'); }
         catch(e) { S.data.stavki = []; }
