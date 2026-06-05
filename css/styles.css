@@ -1965,6 +1965,9 @@ body.neo-light .speedo-item {
   font-family:'Unbounded',sans-serif;
   font-size:11px; font-weight:900; color:var(--txt); line-height:1;
 }
+body:not(.light):not(.tiffany):not(.cinematic):not(.neo-dark):not(.neo-light):not(.cosmic) .speedo-value {
+  color:#fff !important;
+}
 .speedo-visits {
   position:absolute; top:85%; left:50%;
   transform:translate(-50%, -50%);

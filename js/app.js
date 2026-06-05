@@ -503,6 +503,21 @@ function escapeHtml(v) {
 
 const escapeAttr = escapeHtml;
 
+function jsArg(v) {
+  return JSON.stringify(String(v ?? ''));
+}
+
+function safeUrl(v, allowedProtocols = ['http:', 'https:']) {
+  const raw = String(v || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw, location.href);
+    return allowedProtocols.includes(url.protocol) ? url.href : '';
+  } catch(e) {
+    return '';
+  }
+}
+
 function normalizeEmail(v) {
   return String(v || '')
     .replace(/\u00a0/g, ' ')
@@ -715,10 +730,7 @@ function firebaseProfile(user) {
   return {
     uid: user.uid,
     name: sheetName || profile.name || user.displayName || '',
-    email,
-    photoURL: profile.picture || user.photoURL || '',
     page: getPresencePageLabel(),
-    userAgent: navigator.userAgent,
   };
 }
 
@@ -801,12 +813,11 @@ function startFirebasePresence(user) {
       status: 'online',
       connectedAt: firebase.database.ServerValue.TIMESTAMP,
       page: profile.page,
-      userAgent: profile.userAgent,
     }).catch(err => {
       p.error = err?.code === 'PERMISSION_DENIED' ? 'Нет доступа к записи соединения online' : 'Не удалось записать online-соединение';
       renderPresenceState();
     });
-    p.userRef.update(online).catch(err => {
+    p.userRef.set(online).catch(err => {
       p.error = err?.code === 'PERMISSION_DENIED' ? 'Нет доступа к записи online-статуса' : 'Не удалось записать online-статус';
       renderPresenceState();
     });
@@ -905,9 +916,22 @@ function cleanupTokenRequest() {
   tokenRequest = null;
 }
 
+function setAuthChromeVisible(visible) {
+  const display = visible ? '' : 'none';
+  ['presence-wrap', 'btn-refresh', 'hamburger-wrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = display;
+  });
+  if (!visible) {
+    closePresenceModal?.();
+    closeHamburger?.();
+  }
+}
+
 function showLoginScreen() {
   const l = document.getElementById('silent-loader');
   if (l) l.remove();
+  setAuthChromeVisible(false);
   const login = document.getElementById('scr-login');
   if (login) {
     login.style.display = '';
@@ -1100,6 +1124,7 @@ function renderUser() {
 
 function onLogin() {
   S.authReady = false;
+  setAuthChromeVisible(true);
   const _bo = document.getElementById('btn-out');
   if (_bo) _bo.style.display = '';
   document.getElementById('main-nav').style.display  = 'none';
@@ -1146,6 +1171,7 @@ function onLogout() {
   S.data = { otchet:null, dohod:null, grafik:null, instruktsii:null, d_otchet:null, d_dohod:null, cnvrs:null, stavki:null, d_stavki:null, vizity:null, plan:null, d_vizity:null };
   ['crm_tok','crm_exp','crm_user'].forEach(k => localStorage.removeItem(k));
   document.getElementById('user-wrap').style.display = 'none';
+  setAuthChromeVisible(false);
   const _bo2 = document.getElementById('btn-out');
   if (_bo2) _bo2.style.display = 'none';
   document.getElementById('main-nav').style.display  = 'none';
@@ -1718,6 +1744,14 @@ function setLiveHTML(el, html) {
   scheduleAnimatedValues(el);
 }
 
+async function liveApi(sheet, range, fallback = []) {
+  try {
+    return await api(sheet, range);
+  } catch(e) {
+    return fallback || [];
+  }
+}
+
 async function refreshVisibleDataLive() {
   if (document.getElementById('scr-vizity')?.classList.contains('on')) return;
   if (liveRefreshInFlight || Object.keys(_apiInflight).length) return;
@@ -1734,18 +1768,18 @@ async function refreshVisibleDataLive() {
       if (!matched) return;
       if (role === 'dozhim') {
         const [dv, pd, gr] = await Promise.all([
-          api(SHEETS.d_vizity, 'A:N').catch(() => []),
-          api(SHEETS.plan, 'A:B').catch(() => []),
-          api(SHEETS.grafik, 'A1:AI25').catch(() => []),
+          liveApi(SHEETS.d_vizity, 'A:N', S.data.d_vizity),
+          liveApi(SHEETS.plan, 'A:B', S.data.plan),
+          liveApi(SHEETS.grafik, 'A1:AI25', S.data.grafik),
         ]);
         S.data.d_vizity = dv; S.data.plan = pd; S.data.grafik = gr;
       } else {
         const [vd, pd, st, cn, gr] = await Promise.all([
-          api(SHEETS.vizity, 'A:N').catch(() => []),
-          api(SHEETS.plan, 'A:B').catch(() => []),
-          api(SHEETS.stavki, 'A1:B25').catch(() => []),
-          api(SHEETS.cnvrs, 'A1:N40').catch(() => []),
-          api(SHEETS.grafik, 'A1:AI25').catch(() => []),
+          liveApi(SHEETS.vizity, 'A:N', S.data.vizity),
+          liveApi(SHEETS.plan, 'A:B', S.data.plan),
+          liveApi(SHEETS.stavki, 'A1:B25', S.data.stavki),
+          liveApi(SHEETS.cnvrs, 'A1:N40', S.data.cnvrs),
+          liveApi(SHEETS.grafik, 'A1:AI25', S.data.grafik),
         ]);
         S.data.vizity = vd; S.data.plan = pd; S.data.stavki = st; S.data.cnvrs = cn; S.data.grafik = gr;
       }
@@ -1755,11 +1789,11 @@ async function refreshVisibleDataLive() {
 
     if (activeTab === 'otchet') {
       const tasks = [
-        api(SHEETS.vizity, 'A:N').catch(() => []),
-        api(SHEETS.plan, 'A:B').catch(() => []),
-        api(SHEETS.cnvrs, 'A1:N40').catch(() => []),
+        liveApi(SHEETS.vizity, 'A:N', S.data.vizity),
+        liveApi(SHEETS.plan, 'A:B', S.data.plan),
+        liveApi(SHEETS.cnvrs, 'A1:N40', S.data.cnvrs),
       ];
-      if (S.reportTab === 'dozhim' || S.reportTab === 'dept') tasks.push(api(SHEETS.d_vizity, 'A:N').catch(() => []));
+      if (S.reportTab === 'dozhim' || S.reportTab === 'dept') tasks.push(liveApi(SHEETS.d_vizity, 'A:N', S.data.d_vizity));
       const [vd, pd, cn, dv] = await Promise.all(tasks);
       S.data.vizity = vd; S.data.plan = pd; S.data.cnvrs = cn;
       if (dv) S.data.d_vizity = dv;
@@ -1769,17 +1803,17 @@ async function refreshVisibleDataLive() {
       const isDozhim = role === 'dozhim' || (isCeo && S.dohodTab === 'dozhim');
       if (isDozhim) {
         const [dv, pd, gr] = await Promise.all([
-          api(SHEETS.d_vizity, 'A:N').catch(() => []),
-          api(SHEETS.plan, 'A:B').catch(() => []),
-          api(SHEETS.grafik, 'A1:AI25').catch(() => []),
+          liveApi(SHEETS.d_vizity, 'A:N', S.data.d_vizity),
+          liveApi(SHEETS.plan, 'A:B', S.data.plan),
+          liveApi(SHEETS.grafik, 'A1:AI25', S.data.grafik),
         ]);
         S.data.d_vizity = dv; S.data.plan = pd; S.data.grafik = gr;
       } else {
         const [vd, pd, st, gr] = await Promise.all([
-          api(SHEETS.vizity, 'A:N').catch(() => []),
-          api(SHEETS.plan, 'A:B').catch(() => []),
-          api(SHEETS.stavki, 'A1:B25').catch(() => []),
-          api(SHEETS.grafik, 'A1:AI25').catch(() => []),
+          liveApi(SHEETS.vizity, 'A:N', S.data.vizity),
+          liveApi(SHEETS.plan, 'A:B', S.data.plan),
+          liveApi(SHEETS.stavki, 'A1:B25', S.data.stavki),
+          liveApi(SHEETS.grafik, 'A1:AI25', S.data.grafik),
         ]);
         S.data.vizity = vd; S.data.plan = pd; S.data.stavki = st; S.data.grafik = gr;
       }
@@ -1787,16 +1821,16 @@ async function refreshVisibleDataLive() {
     } else if (activeTab === 'rating') {
       const isDozhimRating = S.ratingDept === 'dozhim';
       const [pd, vd, st] = await Promise.all([
-        api(SHEETS.plan, 'A:B').catch(() => []),
-        api(isDozhimRating ? SHEETS.d_vizity : SHEETS.vizity, 'A:N').catch(() => []),
-        isDozhimRating ? api(SHEETS.d_stavki, 'A1:B25').catch(() => []) : Promise.resolve(S.data.stavki || []),
+        liveApi(SHEETS.plan, 'A:B', S.data.plan),
+        liveApi(isDozhimRating ? SHEETS.d_vizity : SHEETS.vizity, 'A:N', isDozhimRating ? S.data.d_vizity : S.data.vizity),
+        isDozhimRating ? liveApi(SHEETS.d_stavki, 'A1:B25', S.data.d_stavki) : Promise.resolve(S.data.stavki || []),
       ]);
       S.data.plan = pd;
       if (isDozhimRating) { S.data.d_vizity = vd; S.data.d_stavki = st; }
       else S.data.vizity = vd;
       renderRating();
     } else if (activeTab === 'grafik') {
-      S.data.grafik = await api(SHEETS.grafik, 'A1:AI25').catch(() => []);
+      S.data.grafik = await liveApi(SHEETS.grafik, 'A1:AI25', S.data.grafik);
       renderGrafik();
     }
   } finally {
@@ -2120,8 +2154,10 @@ function getMgrMessengerHtml(name) {
     }
   }
   let html = '';
-  if (tg) html += `<a href="${tg}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Telegram" style="display:inline-flex;text-decoration:none;opacity:0.6;transition:opacity .15s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'"><svg width="20" height="20" viewBox="0 0 24 24" fill="#2CA5E0"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8l-1.68 7.93c-.12.55-.44.69-.9.43l-2.48-1.83-1.2 1.16c-.13.13-.25.25-.5.25l.18-2.52 4.56-4.12c.2-.18-.04-.27-.3-.1L7.92 14.45l-2.42-.75c-.52-.17-.53-.52.11-.77l9.48-3.66c.43-.16.82.11.55.53z"/></svg></a>`;
-  if (max) html += `<a href="${max}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="MAX" class="max-icon-link" style="display:inline-flex;text-decoration:none;margin-left:2px">${maxIconSvg(16)}</a>`;
+  const tgUrl = safeUrl(tg);
+  const maxUrl = safeUrl(max);
+  if (tgUrl) html += `<a href="${escapeAttr(tgUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Telegram" style="display:inline-flex;text-decoration:none;opacity:0.6;transition:opacity .15s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'"><svg width="20" height="20" viewBox="0 0 24 24" fill="#2CA5E0"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8l-1.68 7.93c-.12.55-.44.69-.9.43l-2.48-1.83-1.2 1.16c-.13.13-.25.25-.5.25l.18-2.52 4.56-4.12c.2-.18-.04-.27-.3-.1L7.92 14.45l-2.42-.75c-.52-.17-.53-.52.11-.77l9.48-3.66c.43-.16.82.11.55.53z"/></svg></a>`;
+  if (maxUrl) html += `<a href="${escapeAttr(maxUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="MAX" class="max-icon-link" style="display:inline-flex;text-decoration:none;margin-left:2px">${maxIconSvg(16)}</a>`;
   return html ? `<span style="display:inline-flex;align-items:center;gap:3px;margin-left:6px">${html}</span>` : '';
 }
 
@@ -3518,7 +3554,7 @@ const LINKS_BTNS = [
 ];
 
 function renderLinksTab() {
-  const opts = Object.keys(LINKS_DATA).map(c => `<option value="${c}">${c}</option>`).join('');
+  const opts = Object.keys(LINKS_DATA).map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
   return `
 <div class="links-wrap">
   <div class="links-top-row">
@@ -3569,16 +3605,18 @@ function initLinksTab() {
   });
 
   function openLink(url) {
+    const safe = safeUrl(url);
+    if (!safe) return;
     if (linksOpenInApp) {
       // открываем внутри WebView / приложения
-      window.open(url, '_blank', 'noopener,noreferrer');
+      window.open(safe, '_blank', 'noopener,noreferrer');
     } else {
       // WPF WebView2 → C# WebMessageReceived → Process.Start(UseShellExecute=true)
       if (window.chrome && window.chrome.webview) {
-        window.chrome.webview.postMessage(JSON.stringify({ type: 'openExternal', url: url }));
+        window.chrome.webview.postMessage(JSON.stringify({ type: 'openExternal', url: safe }));
       } else {
         // fallback для обычного браузера
-        window.open(url, '_blank', 'noopener,noreferrer');
+        window.open(safe, '_blank', 'noopener,noreferrer');
       }
     }
   }
@@ -3587,20 +3625,22 @@ function initLinksTab() {
     const d = LINKS_DATA[city];
     if (!d) return;
     const btns = LINKS_BTNS.map(b =>
-      `<button class="links-btn" data-href="${d[b.key]}">${b.label}</button>`
+      `<button class="links-btn" data-href="${escapeAttr(safeUrl(d[b.key]))}">${escapeHtml(b.label)}</button>`
     ).join('');
-    const photoHtml = d.photo
+    const photoUrl = safeUrl(d.photo);
+    const safeCity = escapeHtml(city);
+    const photoHtml = photoUrl
       ? `<div class="links-photo-wrap">
-           <span class="links-photo-label">Фото автосалона — ${city}</span>
+           <span class="links-photo-label">Фото автосалона — ${safeCity}</span>
            <div class="links-photo-img-wrap" id="links-photo-wrap">
-             <img src="${d.photo}" alt="Фото автосалона ${city}" onerror="this.parentElement.innerHTML='<div class=\\'links-placeholder-inner\\'>Фото временно недоступно</div>'">
+             <img src="${escapeAttr(photoUrl)}" alt="Фото автосалона ${escapeAttr(city)}" onerror="this.parentElement.innerHTML='<div class=\\'links-placeholder-inner\\'>Фото временно недоступно</div>'">
            </div>
          </div>`
       : '';
     document.getElementById('links-content').innerHTML = `
       <div class="links-city-header">
-        <span class="links-city-name">${city}</span>
-        <span class="links-city-addr">${d.addr}</span>
+        <span class="links-city-name">${safeCity}</span>
+        <span class="links-city-addr">${escapeHtml(d.addr)}</span>
       </div>
       <div class="links-btns-grid">${btns}</div>
       ${photoHtml}`;
@@ -3668,21 +3708,21 @@ function phoneLookup() {
     btn.disabled = false;
     var d = Array.isArray(data) ? data[0] : data;
     if (!d) { res.innerHTML = '<div class="pl-err">Пустой ответ</div>'; return; }
-    if (d.error) { res.innerHTML = '<div class="pl-err">Ошибка: ' + d.error + '</div>'; return; }
+    if (d.error) { res.innerHTML = '<div class="pl-err">Ошибка: ' + escapeHtml(d.error) + '</div>'; return; }
     if (!d.phone) { res.innerHTML = '<div class="pl-err">Номер не распознан</div>'; return; }
     var qc = {0:'Верный',1:'Уточнить',2:'Не определён',3:'Неверный'};
     var qcC = {0:'var(--grn)',1:'#fbad33',2:'var(--txt3)',3:'var(--red)'};
     var rows = [];
-    if (d.type)      rows.push(['Тип',            d.type]);
-    if (d.provider)  rows.push(['Оператор',        d.provider]);
-    if (d.country)   rows.push(['Страна',           d.country]);
-    if (d.region)    rows.push(['Регион',           d.region]);
-    if (d.city)      rows.push(['Город',            d.city]);
-    if (d.timezone)  rows.push(['Часовой пояс',     d.timezone]);
-    if (d.city_code) rows.push(['DEF / код города', d.city_code]);
-    if (d.extension) rows.push(['Добавочный',       d.extension]);
+    if (d.type)      rows.push(['Тип',            escapeHtml(d.type)]);
+    if (d.provider)  rows.push(['Оператор',        escapeHtml(d.provider)]);
+    if (d.country)   rows.push(['Страна',           escapeHtml(d.country)]);
+    if (d.region)    rows.push(['Регион',           escapeHtml(d.region)]);
+    if (d.city)      rows.push(['Город',            escapeHtml(d.city)]);
+    if (d.timezone)  rows.push(['Часовой пояс',     escapeHtml(d.timezone)]);
+    if (d.city_code) rows.push(['DEF / код города', escapeHtml(d.city_code)]);
+    if (d.extension) rows.push(['Добавочный',       escapeHtml(d.extension)]);
     rows.push(['Качество','<span style="color:'+(qcC[d.qc]||'var(--txt2)')+'">'+( qc[d.qc]||'—')+'</span>']);
-    res.innerHTML = '<div class="pl-number">'+d.phone+'</div>' +
+    res.innerHTML = '<div class="pl-number">'+escapeHtml(d.phone)+'</div>' +
       rows.map(function(r){return '<div class="pl-row"><span class="pl-k">'+r[0]+'</span><span class="pl-v">'+r[1]+'</span></div>';}).join('');
   }
 
@@ -3701,7 +3741,7 @@ function phoneLookup() {
   })
   .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
   .then(render)
-  .catch(function(err) { btn.disabled=false; res.innerHTML='<div class="pl-err">Ошибка: '+err.message+'</div>'; });
+  .catch(function(err) { btn.disabled=false; res.innerHTML='<div class="pl-err">Ошибка: '+escapeHtml(err.message)+'</div>'; });
 }
 
 // ==================== PLAN EDITOR (CEO) ====================
@@ -3734,9 +3774,9 @@ function openPlanEditor() {
 
   function makeRows(items) {
     return items.map(it => `<div class="pe-row">
-      <span class="pe-name">${it.name}</span>
+      <span class="pe-name">${escapeHtml(it.name)}</span>
       <input class="pe-input" type="number" min="0" step="1"
-             data-name="${it.name}" data-idx="${it.idx}" value="${it.plan}"/>
+             data-name="${escapeAttr(it.name)}" data-idx="${it.idx}" value="${escapeAttr(it.plan)}"/>
     </div>`).join('');
   }
 
@@ -5562,6 +5602,7 @@ document.addEventListener('touchmove', function(e) {
 function init() {
   syncTheme();
   initLogoRotation();
+  setAuthChromeVisible(false);
 
   // На Android WebView сразу показываем экран входа с подсказкой
   if (isAndroidWebView) {
@@ -5569,7 +5610,7 @@ function init() {
     if (btn) {
       btn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 11h8.533c.044.385.067.78.067 1.184 0 3.37-1.17 6.22-3.207 8.154C15.553 22.124 13.9 23 12 23A11 11 0 1 1 12 1c2.95 0 5.56 1.113 7.522 2.934l-3.076 3.042C15.197 5.79 13.68 5 12 5a7 7 0 1 0 0 14c3.205 0 5.542-1.916 6.27-4.987H12v-3z"/></svg>Открыть в Chrome`;
     }
-    document.getElementById('scr-login').classList.add('on'); document.body.classList.add('login-active'); if(window._loginLiquidInit) window._loginLiquidInit();
+    showLoginScreen();
     return;
   }
 
@@ -5578,8 +5619,7 @@ function init() {
     if (!tokenClient) {
       const l = document.getElementById('silent-loader');
       if (l) l.remove();
-      document.getElementById('scr-login').style.display = '';
-      document.getElementById('scr-login').classList.add('on'); document.body.classList.add('login-active'); if(window._loginLiquidInit) window._loginLiquidInit();
+      showLoginScreen();
     }
   }, 6000);
 
@@ -5588,7 +5628,7 @@ function init() {
       clearTimeout(gsiTimeout);
       initAuth();
       if (!tryRestore()) {
-        document.getElementById('scr-login').classList.add('on'); document.body.classList.add('login-active'); if(window._loginLiquidInit) window._loginLiquidInit();
+        showLoginScreen();
       }
     } else setTimeout(waitGoogle, 100);
   }
@@ -5974,8 +6014,10 @@ function renderRating() {
 
   function messengerIcons(links) {
     let html = '';
-    if (links.tg) html += `<a href="${links.tg}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Telegram" style="display:inline-flex;text-decoration:none;opacity:0.6;transition:opacity .15s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'"><svg width="20" height="20" viewBox="0 0 24 24" fill="#2CA5E0"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8l-1.68 7.93c-.12.55-.44.69-.9.43l-2.48-1.83-1.2 1.16c-.13.13-.25.25-.5.25l.18-2.52 4.56-4.12c.2-.18-.04-.27-.3-.1L7.92 14.45l-2.42-.75c-.52-.17-.53-.52.11-.77l9.48-3.66c.43-.16.82.11.55.53z"/></svg></a>`;
-    if (links.max) html += `<a href="${links.max}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="MAX" class="max-icon-link" style="display:inline-flex;text-decoration:none;margin-left:2px">${maxIconSvg(18)}</a>`;
+    const tgUrl = safeUrl(links.tg);
+    const maxUrl = safeUrl(links.max);
+    if (tgUrl) html += `<a href="${escapeAttr(tgUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Telegram" style="display:inline-flex;text-decoration:none;opacity:0.6;transition:opacity .15s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'"><svg width="20" height="20" viewBox="0 0 24 24" fill="#2CA5E0"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8l-1.68 7.93c-.12.55-.44.69-.9.43l-2.48-1.83-1.2 1.16c-.13.13-.25.25-.5.25l.18-2.52 4.56-4.12c.2-.18-.04-.27-.3-.1L7.92 14.45l-2.42-.75c-.52-.17-.53-.52.11-.77l9.48-3.66c.43-.16.82.11.55.53z"/></svg></a>`;
+    if (maxUrl) html += `<a href="${escapeAttr(maxUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="MAX" class="max-icon-link" style="display:inline-flex;text-decoration:none;margin-left:2px">${maxIconSvg(18)}</a>`;
     return html ? `<span style="display:inline-flex;align-items:center;gap:3px;margin-left:5px">${html}</span>` : '';
   }
   const rankColors = [
@@ -6547,27 +6589,27 @@ function renderVizForm(row, dept) {
       const m = val.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
       if (m) dateVal = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
       else if (/^\d{4}-\d{2}-\d{2}/.test(val)) dateVal = val;
-      input = `<input type="date" value="${dateVal}" data-row="${row._sheetRow}" data-col="${idx}" oninput="vizOnChange(this)" class="${!val?'invalid':''}">`;
+      input = `<input type="date" value="${escapeAttr(dateVal)}" data-row="${row._sheetRow}" data-col="${idx}" oninput="vizOnChange(this)" class="${!val?'invalid':''}">`;
 
     } else if (col.type === 'phone') {
-      input = `<input type="tel" value="${val}" placeholder="79000000000" data-row="${row._sheetRow}" data-col="${idx}"
+      input = `<input type="tel" value="${escapeAttr(val)}" placeholder="79000000000" data-row="${row._sheetRow}" data-col="${idx}"
         oninput="vizOnChange(this)" onblur="vizFormatPhone(this)">`;
 
     } else if (col.type === 'select' && Array.isArray(col.opts)) {
       const opts = col.opts;
       input = `<select data-row="${row._sheetRow}" data-col="${idx}" onchange="vizOnChange(this)">
         <option value=""></option>
-        ${opts.map(o=>`<option${val===o?' selected':''}>${o}</option>`).join('')}
+        ${opts.map(o=>`<option value="${escapeAttr(o)}"${val===o?' selected':''}>${escapeHtml(o)}</option>`).join('')}
       </select>`;
 
     } else if (col.type === 'select' && typeof col.opts === 'object') {
       input = `<select data-row="${row._sheetRow}" data-col="${idx}" onchange="vizOnChange(this)">
         <option value=""></option>
-        ${catOpts.map(o=>`<option${val===o?' selected':''}>${o}</option>`).join('')}
+        ${catOpts.map(o=>`<option value="${escapeAttr(o)}"${val===o?' selected':''}>${escapeHtml(o)}</option>`).join('')}
       </select>`;
 
     } else if (col.type === 'picker') {
-      const displayVal = val ? `<span>${val}</span>` : `<span style='color:var(--txt3)'>Выбрать…</span>`;
+      const displayVal = val ? `<span>${escapeHtml(val)}</span>` : `<span style='color:var(--txt3)'>Выбрать…</span>`;
       input = `<button class="vt-status-trigger" onclick="openVizPicker(${row._sheetRow},${idx},this)"
         id="vtpick-${row._sheetRow}-${idx}">
         ${displayVal}
@@ -6577,16 +6619,16 @@ function renderVizForm(row, dept) {
     } else if (col.type === 'mgr') {
       input = `<select data-row="${row._sheetRow}" data-col="${idx}" onchange="vizOnChange(this)">
         <option value=""></option>
-        ${mgrList.map(o=>`<option${val===o?' selected':''}>${o}</option>`).join('')}
+        ${mgrList.map(o=>`<option value="${escapeAttr(o)}"${val===o?' selected':''}>${escapeHtml(o)}</option>`).join('')}
       </select>`;
 
     } else if (col.type === 'number') {
-      input = `<input type="number" value="${val}" placeholder="0" data-row="${row._sheetRow}" data-col="${idx}" oninput="vizOnChange(this)">`;
+      input = `<input type="number" value="${escapeAttr(val)}" placeholder="0" data-row="${row._sheetRow}" data-col="${idx}" oninput="vizOnChange(this)">`;
 
     } else {
-      input = `<input type="text" value="${val}" placeholder="${col.lbl}" data-row="${row._sheetRow}" data-col="${idx}" oninput="vizOnChange(this)" class="${col.req&&!val?'invalid':''}">`;
+      input = `<input type="text" value="${escapeAttr(val)}" placeholder="${escapeAttr(col.lbl)}" data-row="${row._sheetRow}" data-col="${idx}" oninput="vizOnChange(this)" class="${col.req&&!val?'invalid':''}">`;
     }
-    return `<div class="vt-field ${gridClass}"><label class="${lblCls}">${col.lbl}</label>${input}</div>`;
+    return `<div class="vt-field ${gridClass}"><label class="${lblCls}">${escapeHtml(col.lbl)}</label>${input}</div>`;
   }
 
   return `<div class="vt-row-form">
@@ -6869,11 +6911,11 @@ function renderVizPicker(opts, curVal, allowFree, sheetRow, colIdx) {
   const ph = allowFree ? 'Поиск или введите вручную…' : 'Поиск…';
   overlay.innerHTML = `<div class="vt-picker-modal">
     <div class="vt-picker-hdr">
-      <input class="vt-picker-search" placeholder="${ph}" oninput="filterVizPicker(this.value)" id="vt-picker-search">
+      <input class="vt-picker-search" placeholder="${escapeAttr(ph)}" oninput="filterVizPicker(this.value)" id="vt-picker-search">
       <button class="vt-picker-cancel" onclick="closeVizPicker()">Отмена</button>
     </div>
     <div class="vt-picker-list" id="vt-picker-list">
-      ${opts.map(o=>`<div class="vt-picker-item${o===curVal?' selected':''}" onclick="selectVizPicker('${o.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">${o}</div>`).join('')}
+      ${opts.map(o=>`<div class="vt-picker-item${o===curVal?' selected':''}" onclick="selectVizPicker(${jsArg(o)})">${escapeHtml(o)}</div>`).join('')}
     </div>
   </div>`;
   overlay.classList.add('open');
@@ -6889,8 +6931,8 @@ function filterVizPicker(q) {
   const ql = q.toLowerCase();
   const filtered = opts.filter(o => o.toLowerCase().includes(ql));
   const freeEntry = af && q && !opts.some(o => o.toLowerCase() === ql)
-    ? `<div class="vt-picker-item" onclick="selectVizPicker('${q.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')">✏️ «${q}»</div>` : '';
-  list.innerHTML = filtered.map(o => `<div class="vt-picker-item" onclick="selectVizPicker('${o.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}' )">${o}</div>`).join('') + freeEntry;
+    ? `<div class="vt-picker-item" onclick="selectVizPicker(${jsArg(q)})">✏️ «${escapeHtml(q)}»</div>` : '';
+  list.innerHTML = filtered.map(o => `<div class="vt-picker-item" onclick="selectVizPicker(${jsArg(o)})">${escapeHtml(o)}</div>`).join('') + freeEntry;
 }
 
 function selectVizPicker(val) {
@@ -6904,7 +6946,10 @@ function selectVizPicker(val) {
   const btn = document.getElementById(`vtpick-${sheetRow}-${colIdx}`);
   if (btn) {
     const sp = btn.querySelector('span');
-    if (sp) sp.innerHTML = val || `<span style='color:var(--txt3)'>Выбрать…</span>`;
+    if (sp) {
+      sp.textContent = val || 'Выбрать…';
+      sp.style.color = val ? '' : 'var(--txt3)';
+    }
   }
   // Обновляем данные строки
   const row = S.vizRows.find(r => r._sheetRow === sheetRow);
