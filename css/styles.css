@@ -1968,6 +1968,11 @@ body.neo-light .speedo-item {
 body:not(.light):not(.tiffany):not(.cinematic):not(.neo-dark):not(.neo-light):not(.cosmic) .speedo-value {
   color:#fff !important;
 }
+body:not(.light):not(.tiffany):not(.cinematic):not(.neo-dark):not(.neo-light):not(.cosmic)
+  :where(.speedo-value, .gauge-value, .kpi-gauge-value, .kpi-speedo-value, .dash-value, .dashboard-gauge-value) {
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+}
 .speedo-visits {
   position:absolute; top:85%; left:50%;
   transform:translate(-50%, -50%);
@@ -4427,6 +4432,18 @@ body.cosmic #main-dock .app-icon {
 .dock-popup-btn + .dock-popup-btn { border-top: 1px solid var(--line); }
 .dock-popup-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+#dock-kpi-popup .dock-popup-btn,
+#dock-dohod-popup .dock-popup-btn,
+#dock-vizity-popup .dock-popup-btn,
+#floating-subtabs .report-subtab,
+#floating-dohod-subtabs .report-subtab,
+.rating-dept-btn {
+  min-height: 34px;
+  min-width: 92px;
+  padding: 0 18px;
+  border-radius: 18px;
+  box-sizing: border-box;
 }
 /* no active dot - removed */
 
