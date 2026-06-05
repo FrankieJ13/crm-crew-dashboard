@@ -1969,7 +1969,18 @@ body:not(.light):not(.tiffany):not(.cinematic):not(.neo-dark):not(.neo-light):no
   color:#fff !important;
 }
 body:not(.light):not(.tiffany):not(.cinematic):not(.neo-dark):not(.neo-light):not(.cosmic)
-  :where(.speedo-value, .gauge-value, .kpi-gauge-value, .kpi-speedo-value, .dash-value, .dashboard-gauge-value) {
+  #c-personal :where(
+    .speedo-value,
+    .gauge-value,
+    .gauge-num,
+    .gauge-pct,
+    .kpi-gauge-value,
+    .kpi-speedo-value,
+    .speedometer-value,
+    .radial-value,
+    .dash-value,
+    .dashboard-gauge-value
+  ) {
   color:#fff !important;
   -webkit-text-fill-color:#fff !important;
 }
@@ -4433,15 +4444,17 @@ body.cosmic #main-dock .app-icon {
 .dock-popup-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
 }
+#dock-kpi-popup,
+#dock-dohod-popup,
+#dock-vizity-popup {
+  min-width: 0;
+}
 #dock-kpi-popup .dock-popup-btn,
 #dock-dohod-popup .dock-popup-btn,
-#dock-vizity-popup .dock-popup-btn,
-#floating-subtabs .report-subtab,
-#floating-dohod-subtabs .report-subtab,
-.rating-dept-btn {
-  min-height: 34px;
-  min-width: 92px;
-  padding: 0 18px;
+#dock-vizity-popup .dock-popup-btn {
+  min-height: 32px;
+  width: 104px;
+  padding: 0 14px;
   border-radius: 18px;
   box-sizing: border-box;
 }
