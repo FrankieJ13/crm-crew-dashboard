@@ -4452,11 +4452,15 @@ body.cosmic #main-dock .app-icon {
 #dock-kpi-popup .dock-popup-btn,
 #dock-dohod-popup .dock-popup-btn,
 #dock-vizity-popup .dock-popup-btn {
-  min-height: 32px;
-  width: 104px;
-  padding: 0 14px;
+  min-height: 26px;
+  min-width: 68px;
+  width: auto;
+  padding: 3px 10px;
   border-radius: 18px;
   box-sizing: border-box;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .06em;
 }
 /* no active dot - removed */
 
